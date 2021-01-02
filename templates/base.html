@@ -1,0 +1,28 @@
+{% extends "bootstrap/base.html" %}
+{% import "bootstrap/wtf.html" as wtf %}
+
+{% block title %}
+{% endblock %}
+{% block styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+{% endblock %}
+
+{% block content %}
+<body>
+<header>
+  <div class="container">
+    <h1 class="logo">My algos</h1>
+    <strong><nav>
+      <ul class="menu">
+		<li><a href="{{ url_for('home') }}" type="button" class="btn btn-primary">Home</a></li>
+        <li><a href="{{ url_for('home_video2slides') }}" type="button" class="btn btn-primary">Video to slides</a></li>
+      </ul>
+    </nav></strong>
+  </div>
+</header>
+<div class="container">
+  {% block section %}
+  {% endblock %}
+</div>
+</body>
+{% endblock %}

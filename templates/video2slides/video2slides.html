@@ -1,0 +1,24 @@
+{% extends "video2slides/base.html" %}
+{% import "bootstrap/wtf.html" as wtf %}
+
+{% block subtitle %}
+{% if buttonclick %}   
+Results
+{% else %}
+Inputs
+{% endif %}
+{% endblock %}
+
+{% block subsection %}
+<form method="POST" action="/video2slides">
+	{{ wtf.quick_form(form,enctype="multipart/form-data") }}
+</form>
+{% if buttonclick %}   
+<div class="row">
+<div class="col">{{input|safe}}</div>
+</div>
+<hr>
+<a href="/video2slides"><button type="button" class="btn btn-light">Back</button></a>
+{% endif %}
+{% endblock %}
+
