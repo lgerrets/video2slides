@@ -1,3 +1,4 @@
+# conda activate testweb
 Flask_WTF==0.14.2
 Flask==1.1.1
 WTForms==2.2.1
@@ -9,3 +10,5 @@ Pillow==8.0.1
 # tensorflow==2.4.0
 Werkzeug==0.15.5
 gunicorn
+opencv-python
+pysimplegui

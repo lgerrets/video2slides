@@ -20,6 +20,7 @@ except ImportError as e:
 	warnings.warn(str(e), RuntimeWarning)
 
 seuil = 10000
+skipframes = 50
 
 class TimeProfiler:
 	def __init__(self, verbose):
@@ -130,7 +131,7 @@ def convert_video(file, outdir):
 		if i == 0:
 			ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
 			images.append((i,ds))
-			cv2.imwrite(os.path.join(outdir, "frame_00001_00m_00s.jpg"), image)
+			cv2.imwrite(os.path.join(outdir, "frame_00001_00m_00s.png"), image)
 		else:
 			ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
 			prof.time("resize")
@@ -155,22 +156,35 @@ def convert_video(file, outdir):
 				seconds = int(i/fps)
 				minutes = int(seconds // 60)
 				seconds = int(seconds % 60)
-				cv2.imwrite(os.path.join(outdir, "frame_%05d_%03dm_%02ds.jpg" % (len(images), minutes, seconds)), image)
+				cv2.imwrite(os.path.join(outdir, "frame_%05d_%03dm_%02ds.png" % (len(images), minutes, seconds)), image)
 				prof.time("write")
 			#if i == 2:
 			#	print(image.shape, image.max())
 			#	break
 		prof.print()
-		i += 50
+		i += skipframes
 		t = time.time()
 		if t - start > 60:
 			start = t
 			print("elapsed: %.2f"%(t-start0), "timestamp: %.2f"%(i/fps), "n_images: %d"%len(images))
 	csv_file.close()
 	distances = np.array(distances)
-	maxmin = np.max(distances[distances<seuil])
-	minmax = np.min(distances[distances>=seuil])
-	print("Differences no-mans-range: %.2f - %.2f"%(maxmin, minmax))
+	if len(distances[distances < seuil]) == 0:
+		maxmin = "None were rejected"
+	else:
+		maxmin = np.max(distances[distances<seuil])
+	if len(distances[distances >= seuil]) == 0:
+		minmax = "None were accepted"
+	else:
+		minmax = np.min(distances[distances>=seuil])
+	metadata = {
+		"fps": fps,
+		"Number of frames": totalFrames,
+		"Look every x frames": skipframes,
+		"Smallest accepted": minmax,
+		"Largest rejected": maxmin,
+	}
+	return metadata
 
 if __name__ == '__main__':
 	main()
