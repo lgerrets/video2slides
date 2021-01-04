@@ -19,9 +19,6 @@ try:
 except ImportError as e:
 	warnings.warn(str(e), RuntimeWarning)
 
-seuil = 10000
-skipframes = 50
-
 class TimeProfiler:
 	def __init__(self, verbose):
 		self.timers = {}
@@ -76,7 +73,7 @@ def run_video2slides(request, upload_folder):
 	try:
 		outdir_vid = os.path.join(upload_folder, "out")
 		os.makedirs(outdir_vid, exist_ok=True)
-		convert_video(new_filename)
+		ConvertVideo(new_filename)
 		archive_path = os.path.join(upload_folder, "output.zip")
 		zipdir(archive_path, outdir_vid)
 		send_from_directory(upload_folder, archive_path, as_attachment=True)
@@ -101,90 +98,109 @@ def main():
 		basename = file.split('/')[-1].split('.')[-2]
 		outdir_vid = os.path.join(out_dir, basename)
 		os.makedirs(outdir_vid, exist_ok=True)
-		convert_video(file, outdir_vid)
+		ConvertVideo(file, outdir_vid)
 
-def convert_video(file, outdir):
-	capt = cv2.VideoCapture(file)
-	totalFrames = capt.get(cv2.CAP_PROP_FRAME_COUNT)
-	fps = capt.get(cv2.CAP_PROP_FPS)
-	print(outdir, "fps: %.2f"%fps, "n_frames: %d"%totalFrames)
+class ConvertVideo:
 
-	csv_file = open(os.path.join(outdir, "stats.csv"), "w")
-	csv_writer = csv.DictWriter(csv_file, fieldnames=["frame_id", "timestamp", "unique_frame_id", "difference"])
-	csv_writer.writeheader()
-	distances = []
+	def __init__(self, file, outdir, seuil=10000, skipframes=50, autorun=True):
+		self.outdir = outdir
+		self.capt = cv2.VideoCapture(file)
+		self.totalFrames = self.capt.get(cv2.CAP_PROP_FRAME_COUNT)
+		self.fps = self.capt.get(cv2.CAP_PROP_FPS)
+		print(self.outdir, "fps: %.2f"%self.fps, "n_frames: %d"%self.totalFrames)
 
-	start0 = start = time.time()
-	n_logs = 0
+		self.csv_file = open(os.path.join(self.outdir, "stats.csv"), "w")
+		self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=["frame_id", "timestamp", "unique_frame_id", "difference"])
+		self.csv_writer.writeheader()
+		self.distances = []
 
-	i = 0
-	success = True
-	images = []
-	while success:
-		if i > totalFrames:
-			break
-		prof.reset()
-		capt.set(cv2.CAP_PROP_POS_FRAMES, i)
-		prof.time("set")
-		success, image = capt.read()
-		prof.time("read")
-		if i == 0:
-			ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
-			images.append((i,ds))
-			cv2.imwrite(os.path.join(outdir, "frame_00001_00m_00s.png"), image)
+		self.start0 = self.start = time.time()
+		n_logs = 0
+
+		self.i = 0
+		self.running = True
+		self.images = []
+		self.seuil = seuil
+		self.skipframes = skipframes
+		if autorun:
+			while self.running:
+				self.step()
+			self.stop()
+
+	def step(self):
+		if self.running:
+			if self.i > self.totalFrames:
+				self.running = False
+			else:
+				prof.reset()
+				self.capt.set(cv2.CAP_PROP_POS_FRAMES, self.i)
+				prof.time("set")
+				self.running, image = self.capt.read()
+				prof.time("read")
+				if self.i == 0:
+					ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
+					self.images.append((self.i,ds))
+					cv2.imwrite(os.path.join(self.outdir, "frame_00001_00m_00s.png"), image)
+				else:
+					ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
+					prof.time("resize")
+					found = -1
+					for it, (i_o,o) in enumerate(self.images[-1:-2:-1]):
+						d = np.power((ds - o), 2).sum()
+						if it == 0:
+							self.csv_writer.writerow({
+								"frame_id": self.i,
+								"timestamp": int(self.i/self.fps),
+								"unique_frame_id": i_o,
+								"difference": d,
+							})
+							self.distances.append(d)
+							self.csv_file.flush()
+						if d < self.seuil:
+							found = i_o
+							break
+					prof.time("check")
+					if found == -1:
+						self.images.append((self.i,ds))
+						seconds = int(self.i/self.fps)
+						minutes = int(seconds // 60)
+						seconds = int(seconds % 60)
+						cv2.imwrite(os.path.join(self.outdir, "frame_%05d_%03dm_%02ds.png" % (len(self.images), minutes, seconds)), image)
+						prof.time("write")
+					#if i == 2:
+					#	print(image.shape, image.max())
+					#	break
+				prof.print()
+				self.i += self.skipframes
+				t = time.time()
+				if t - self.start > 60:
+					self.start = t
+					print("elapsed: %.2f"%(t-self.start0), "timestamp: %.2f"%(self.i/self.fps), "n_images: %d"%len(self.images))
+			return self.running, {
+				"progress": self.i/self.totalFrames,
+			}
 		else:
-			ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
-			prof.time("resize")
-			found = -1
-			for it, (i_o,o) in enumerate(images[-1:-2:-1]):
-				d = np.power((ds - o), 2).sum()
-				if it == 0:
-					csv_writer.writerow({
-						"frame_id": i,
-						"timestamp": int(i/fps),
-						"unique_frame_id": i_o,
-						"difference": d,
-					})
-					distances.append(d)
-					csv_file.flush()
-				if d < seuil:
-					found = i_o
-					break
-			prof.time("check")
-			if found == -1:
-				images.append((i,ds))
-				seconds = int(i/fps)
-				minutes = int(seconds // 60)
-				seconds = int(seconds % 60)
-				cv2.imwrite(os.path.join(outdir, "frame_%05d_%03dm_%02ds.png" % (len(images), minutes, seconds)), image)
-				prof.time("write")
-			#if i == 2:
-			#	print(image.shape, image.max())
-			#	break
-		prof.print()
-		i += skipframes
-		t = time.time()
-		if t - start > 60:
-			start = t
-			print("elapsed: %.2f"%(t-start0), "timestamp: %.2f"%(i/fps), "n_images: %d"%len(images))
-	csv_file.close()
-	distances = np.array(distances)
-	if len(distances[distances < seuil]) == 0:
-		maxmin = "None were rejected"
-	else:
-		maxmin = np.max(distances[distances<seuil])
-	if len(distances[distances >= seuil]) == 0:
-		minmax = "None were accepted"
-	else:
-		minmax = np.min(distances[distances>=seuil])
-	metadata = {
-		"fps": fps,
-		"Number of frames": totalFrames,
-		"Look every x frames": skipframes,
-		"Smallest accepted": minmax,
-		"Largest rejected": maxmin,
-	}
-	return metadata
+			return self.stop()
+	
+	def stop(self):
+		self.csv_file.close()
+		self.distances = np.array(self.distances)
+		if len(self.distances[self.distances < self.seuil]) == 0:
+			maxmin = "None were rejected"
+		else:
+			maxmin = np.max(self.distances[self.distances<self.seuil])
+		if len(self.distances[self.distances >= self.seuil]) == 0:
+			minmax = "None were accepted"
+		else:
+			minmax = np.min(self.distances[self.distances>=self.seuil])
+		metadata = {
+			"fps": self.fps,
+			"Number of frames": self.totalFrames,
+			"Look every x frames": self.skipframes,
+			"Smallest accepted": minmax,
+			"Largest rejected": maxmin,
+		}
+		return self.running, metadata
 
 if __name__ == '__main__':
 	main()
