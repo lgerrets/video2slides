@@ -12,6 +12,7 @@ import warnings
 import time
 from datetime import datetime
 import traceback
+import shutil
 
 sg.theme('Dark Blue 3')
 
@@ -60,6 +61,9 @@ def log_error(e, do_raise):
 class GUI:
 
 	def __init__(self):
+		# if true, the processing will be slightly faster, but the user won't see the progress bar
+		self.freeze_while_running = True
+
 		self.threshold = default_threshold
 		self.skipframe = default_skipframe
 		self.valid_skipframe = False
@@ -68,17 +72,21 @@ class GUI:
 		self.valid = False
 
 		converter = None
+		self.running = False
 		self.folder_in = None
+		self.folder_out = ""
 		self.files_in = None
+		self.outfnames = []
 
 		# First the window layout in 2 columns
 		file_list_column = [
+			# required inputs
 			[sg.Text("Select an input folder")],
 			[
 				sg.In(size=(40, 1), enable_events=True, key="-FOLDER IN-"),
 				sg.FolderBrowse(),
 			],
-			[sg.Text("Found videos (supported extensions are: %s."%(", ".join(EXTENSIONS))),],
+			[sg.Text("Found videos (supported extensions are: %s)"%(", ".join(EXTENSIONS))),],
 			[
 				sg.Listbox(
 					values=[], enable_events=True, size=(40, 10), key="-FILES IN-", select_mode="LISTBOX_SELECT_MODE_SINGLE",
@@ -89,18 +97,16 @@ class GUI:
 				sg.InputText(size=(40, 1), enable_events=True, key="-FOLDER OUT-"),
 			],
 			[place(sg.Text("This folder already exists!", size=(40,1), key="-FOLDER OUT WARNING-", text_color="red", visible=False))],
-			[
-				sg.Text("Look every X frames", key="-SKIPFRAME TITLE-", size=(20,1)),
-				sg.InputText("", key="-SKIPFRAME-", size=(8,1), enable_events=True),
-			],
+			# advanced mode inputs
+			[place(sg.Text("Look every X frames (increase to speed up, but note that slides that are shown for a too short period of time will be missed)", key="-SKIPFRAME TITLE-", size=(50,3), visible=False)),],
+			[place(sg.InputText("", key="-SKIPFRAME-", size=(8,1), enable_events=True, visible=False)),],
 			[place(sg.Text("Please enter a number > 0 (default: %s)"%default_skipframe, size=(40,1), key="-SKIPFRAME WARNING-", text_color="red", visible=False))],
+			[place(sg.Text("Threshold (aim for a high gap between 'largest rejected' and 'smallest accepted'; decrease this if some slides are missing)", key="-THRESHOLD TITLE-", size=(50,3), visible=False)),],
+			[place(sg.InputText("", key="-THRESHOLD-", size=(8,1), enable_events=True, visible=False)),],
+			[place(sg.Text("Please enter a number > 0 (default: %s)"%default_threshold, size=(50,1), key="-THRESHOLD WARNING-", text_color="red", visible=False))],
+			# process
 			[
-				sg.Text("Frame threshold", key="-THRESHOLD TITLE-", size=(20,1)),
-				sg.InputText("", key="-THRESHOLD-", size=(8,1), enable_events=True),
-			],
-			[place(sg.Text("Please enter a number > 0 (default: %s)"%default_threshold, size=(40,1), key="-THRESHOLD WARNING-", text_color="red", visible=False))],
-			[
-				sg.Button("Submit", key="-PROCESS-"),
+				sg.Button("Convert", key="-PROCESS-"),
 				place(sg.ProgressBar(max_value=100, orientation='h', size=(20, 20), key='-PROGRESS-', visible=False)),
 			],
 			[sg.Text("", size=(50,1), text_color="red", key="-SUBMIT WARNING-")],
@@ -108,16 +114,17 @@ class GUI:
 
 		# For now will only show the name of the file that was chosen
 		image_viewer_column = [
-			[sg.Text("Processed frames")],
+			[sg.Text("Found slides")],
 			[sg.Listbox(
 					values=[], enable_events=True, size=(40, 10), key="-FILES OUT-", select_mode="LISTBOX_SELECT_MODE_SINGLE",
 				)
 			],
-			[sg.Text("Selected frame")],
+			[sg.Text("Selected slide")],
 			[sg.Image(key="-IMAGE-", size=(192,108))],
+			[sg.Button("Delete this slide", key="-DELETE-")],
 			[
 				place(sg.Text("Analysis details:", key="-METADATA OUT TITLE-")),
-				place(sg.Text("", size=(30,7), key="-METADATA OUT-")),
+				place(sg.Text("", size=(30,9), key="-METADATA OUT-")),
 			],
 		]
 
@@ -126,8 +133,11 @@ class GUI:
 			"-SKIPFRAME TITLE-", "-SKIPFRAME-", "-SKIPFRAME WARNING-",
 			"-THRESHOLD TITLE-", "-THRESHOLD-", "-THRESHOLD WARNING-",
 		]
+
+		# will be disabled while the app is running (ie processing)
 		self.input_keys = [
 			"-FOLDER IN-", "-FILES IN-", "-FOLDER OUT-", "-PROCESS-", "-SKIPFRAME-", "-THRESHOLD-",
+			"-DELETE-",
 		]
 
 		# ----- Full layout -----
@@ -141,7 +151,7 @@ class GUI:
 			[sg.Checkbox("Advanced mode", key="-ADVANCED-", enable_events=True)],
 		]
 
-		self.window = sg.Window("Image Viewer", layout)
+		self.window = sg.Window("Video to slides", layout)
 
 		initialize = True
 
@@ -149,10 +159,14 @@ class GUI:
 		while True:
 			if converter is not None and converter.running:
 				try:
-					running, metadata = converter.step()
+					if self.freeze_while_running:
+						while self.running:
+							self.running, metadata = converter.step()
+					else:
+						self.running, metadata = converter.step()
 				except Exception as e:
 					log_error(e, True)
-				if running:
+				if self.running:
 					self.window["-PROGRESS-"].update(current_count=int(metadata["progress"]*100))
 				else:
 					self.set_input_stuff(False)
@@ -160,24 +174,7 @@ class GUI:
 					for _ in metadata:
 						text += str(_) + ": " + str(metadata[_]) + "\n"
 					self.window["-METADATA OUT-"].update(text)
-					try:
-						# Get list of files in folderto-slides/outp
-						outfile_list = os.listdir(outdir)
-					except:
-						outfile_list = []
-					outfnames = [
-						f
-						for f in outfile_list
-						if os.path.isfile(os.path.join(outdir, f)) and f.lower().endswith(OUTPUT_EXTENTION)
-					]
-					outfnames = sorted(outfnames)
-					self.window["-FILES OUT-"].update(outfnames)
-					if len(outfnames) > 0:
-						f = os.path.join(outdir, outfnames[0])
-						try:
-							self.window["-IMAGE-"].update(data=load_image(f))
-						except RuntimeError as e:
-							log_error(e, False)
+					self.scan_folder_out()
 
 			event, values = self.window.read(1)
 			if initialize:
@@ -190,8 +187,10 @@ class GUI:
 
 			if event == "-FOLDER IN-":
 				self.folder_in = values["-FOLDER IN-"]
-				self.window["-FOLDER OUT-"].update(os.path.join(self.folder_in, "output"))
-				self.window["-PROGRESS-"].update(visible=False, current_count=0)
+				self.folder_out = os.path.join(self.folder_in, "output")
+				self.window["-FOLDER OUT-"].update(self.folder_out)
+			elif event == "-FOLDER OUT-":
+				self.folder_out = values["-FOLDER OUT-"]
 			elif event == "-PROCESS-":
 				if not self.folder_in:
 					self.window["-SUBMIT WARNING-"].update("Please select an input folder")
@@ -206,12 +205,11 @@ class GUI:
 					self.window["-SUBMIT WARNING-"].update("")
 					self.window["-PROGRESS-"].update(visible=True, current_count=0)
 					file = os.path.join(self.folder_in, values["-FILES IN-"][0])
-					outdir = values["-FOLDER OUT-"]
-					converter = ConvertVideo(file, outdir, seuil=self.threshold, skipframes=self.skipframe, autorun=False)
+					converter = ConvertVideo(file, self.folder_out, seuil=self.threshold, skipframes=self.skipframe, autorun=False)
 					self.set_input_stuff(True)
+					self.running = True
 			elif event == "-FILES OUT-":
-				self.window["-PROGRESS-"].update(visible=False, current_count=0)
-				f = os.path.join(outdir, values["-FILES OUT-"][0])
+				f = os.path.join(self.folder_out, values["-FILES OUT-"][0])
 				try:
 					self.window["-IMAGE-"].update(data=load_image(f))
 				except Exception as e:
@@ -232,35 +230,27 @@ class GUI:
 				self.window["-THRESHOLD WARNING-"].update(visible=not self.valid_threshold)
 			elif event == "-ADVANCED-":
 				self.set_advanced_stuff(bool(values["-ADVANCED-"]))
+			elif event == "-DELETE-":
+				if len(values["-FILES OUT-"]) > 0:
+					os.remove(os.path.join(self.folder_out, values["-FILES OUT-"][0]))
+					self.scan_folder_out()
 
-			# update files in self.folder_in
-			if self.folder_in:
-				try:
-					# Get list of files in folder
-					infile_list = os.listdir(self.folder_in)
-				except:
-					infile_list = []
+			if self.folder_out:
+				self.scan_folder_out()
 
-				infnames = [
-					f
-					for f in infile_list
-					if os.path.isfile(os.path.join(self.folder_in, f))
-				]
-				filtered_infnames = []
-				for ext in EXTENSIONS:
-					filtered_infnames += [f for f in infnames if f.lower().endswith(".%s"%ext)]
-				filtered_infnames = sorted(filtered_infnames)
-				if self.files_in != filtered_infnames:
-					self.files_in = filtered_infnames
-					self.window["-FILES IN-"].update(self.files_in)
+			if not self.running:
+				# refresh files
+				if self.folder_in:
+					self.scan_folder_in()
 
-			# can we hit 'process'?
-			self.valid_outdir = not os.path.exists(values["-FOLDER OUT-"])
-			self.valid = not (converter is not None and converter.running) and \
-							self.valid_skipframe and self.valid_threshold and \
-							self.valid_outdir
-			self.window["-PROCESS-"].update(disabled=not self.valid)
-			self.window["-FOLDER OUT WARNING-"].update(visible=not self.valid_outdir)
+				# can we hit 'process'?
+				self.valid_outdir = not os.path.exists(self.folder_out)
+				self.valid = not (converter is not None and converter.running) and \
+								self.valid_skipframe and self.valid_threshold and \
+								self.valid_outdir
+				self.window["-PROCESS-"].update(disabled=not self.valid)
+				self.window["-FOLDER OUT WARNING-"].update(visible=not self.valid_outdir)
+				self.window["-DELETE-"].update(disabled=(len(values["-FILES OUT-"]) == 0))
 
 		self.window.close()
 
@@ -285,5 +275,42 @@ class GUI:
 			self.window[key].update(disabled=disabled)
 		if not disabled:
 			self.window["-PROGRESS-"].update(current_count=0, visible=False)
+
+	def scan_folder_in(self):
+		try:
+			# Get list of files in folder
+			infile_list = os.listdir(self.folder_in)
+		except:
+			infile_list = []
+
+		infnames = [
+			f
+			for f in infile_list
+			if os.path.isfile(os.path.join(self.folder_in, f))
+		]
+		filtered_infnames = []
+		for ext in EXTENSIONS:
+			filtered_infnames += [f for f in infnames if f.lower().endswith(".%s"%ext)]
+		filtered_infnames = sorted(filtered_infnames)
+		if self.files_in != filtered_infnames:
+			self.files_in = filtered_infnames
+			self.window["-FILES IN-"].update(self.files_in)
+
+	def scan_folder_out(self):
+		try:
+			# Get list of files in folderto-slides/outp
+			outfile_list = os.listdir(self.folder_out)
+		except:
+			outfile_list = []
+		outfnames = [
+			f
+			for f in outfile_list
+			if os.path.isfile(os.path.join(self.folder_out, f)) and f.lower().endswith(OUTPUT_EXTENTION)
+		]
+		outfnames = sorted(outfnames)
+		if self.outfnames != outfnames:
+			self.outfnames = outfnames
+			self.window["-FILES OUT-"].update(self.outfnames)
+			self.window["-IMAGE-"].update(data=None)
 
 gui = GUI()

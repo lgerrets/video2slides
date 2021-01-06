@@ -82,8 +82,8 @@ def run_video2slides(request, upload_folder):
 		shutils.rmtree(new_filename)
 
 def main():
-	base_dir = '/tmp/video2slides'
-	video_dir = os.path.join(base_dir, "videos")
+	base_dir = '/home/lucas/Documents/Projets/videos-to-slides'
+	video_dir = base_dir
 	out_dir = os.path.join(base_dir, "out")
 	files = os.listdir(video_dir)
 	print(files)
@@ -108,7 +108,7 @@ class ConvertVideo:
 			shutil.rmtree(outdir)
 		os.makedirs(outdir)
 		self.capt = cv2.VideoCapture(file)
-		self.totalFrames = self.capt.get(cv2.CAP_PROP_FRAME_COUNT)
+		self.totalFrames = int(self.capt.get(cv2.CAP_PROP_FRAME_COUNT))
 		self.fps = self.capt.get(cv2.CAP_PROP_FPS)
 		print(self.outdir, "fps: %.2f"%self.fps, "n_frames: %d"%self.totalFrames)
 
@@ -128,7 +128,7 @@ class ConvertVideo:
 		if autorun:
 			while self.running:
 				self.step()
-			self.stop()
+			print(self.stop())
 
 	def step(self):
 		if self.running:
@@ -143,7 +143,7 @@ class ConvertVideo:
 				if self.i == 0:
 					ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
 					self.images.append((self.i,ds))
-					cv2.imwrite(os.path.join(self.outdir, "frame_00001_00m_00s.png"), image)
+					cv2.imwrite(os.path.join(self.outdir, "frame_00001_000m_00s.png"), image)
 				else:
 					ds = cv2.resize(image, (48, 27), interpolation=cv2.INTER_LINEAR)
 					prof.time("resize")
@@ -202,9 +202,10 @@ class ConvertVideo:
 		metadata = {
 			"fps": self.fps,
 			"Number of frames": self.totalFrames,
-			"Look every x frames": self.skipframes,
-			"Smallest accepted": minmax,
+			"Number of found distinct frames": len(self.images),
 			"Largest rejected": maxmin,
+			"Smallest accepted": minmax,
+			"Processing time": str(np.round(time.time() - self.start0,2)) + "s",
 		}
 		return self.running, metadata
 
