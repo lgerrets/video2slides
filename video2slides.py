@@ -104,6 +104,9 @@ class ConvertVideo:
 
 	def __init__(self, file, outdir, seuil=10000, skipframes=50, autorun=True):
 		self.outdir = outdir
+		if os.path.exists(outdir):
+			shutil.rmtree(outdir)
+		os.makedirs(outdir)
 		self.capt = cv2.VideoCapture(file)
 		self.totalFrames = self.capt.get(cv2.CAP_PROP_FRAME_COUNT)
 		self.fps = self.capt.get(cv2.CAP_PROP_FPS)
@@ -176,9 +179,12 @@ class ConvertVideo:
 				if t - self.start > 60:
 					self.start = t
 					print("elapsed: %.2f"%(t-self.start0), "timestamp: %.2f"%(self.i/self.fps), "n_images: %d"%len(self.images))
-			return self.running, {
-				"progress": self.i/self.totalFrames,
-			}
+			if self.running:
+				return self.running, {
+					"progress": self.i/self.totalFrames,
+				}
+			else:
+				return self.stop()
 		else:
 			return self.stop()
 	
