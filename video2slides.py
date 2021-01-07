@@ -82,9 +82,16 @@ def run_video2slides(request, upload_folder):
 		shutils.rmtree(new_filename)
 
 def main():
-	base_dir = '/home/lucas/Documents/Projets/videos-to-slides'
-	video_dir = base_dir
-	out_dir = os.path.join(base_dir, "out")
+	import argparse
+	parser = argparse.ArgumentParser("Video to slides. Analyse a video and isolate frames which differ *enough* from the previous one.")
+	parser.add_argument("--videodir", help="Directory containing .mp4 files to be converted")
+	parser.add_argument("--outdir", help="Directory where the .png files will be saved")
+	parser.add_argument("--skipframes", required=False, type=int, help="Algorithm optional parameter: only look every X frame", default=50)
+	parser.add_argument("--threshold", required=False, type=int, help="Algorithm optional parameter: the higher, the less resulting slides", default=10000)
+	args = parser.parse_args()
+
+	video_dir = args.videodir
+	out_dir = args.outdir
 	files = os.listdir(video_dir)
 	print(files)
 	os.makedirs(out_dir, exist_ok=True)
@@ -92,13 +99,13 @@ def main():
 		file = os.path.join(video_dir, file)
 		if not os.path.isfile(file):
 			continue
-		ext = file.split('/')[-1].split('.')[-1]
+		ext = file.split('.')[-1]
 		if ext != 'mp4':
 			continue
-		basename = file.split('/')[-1].split('.')[-2]
+		basename = file.split('.')[-2]
 		outdir_vid = os.path.join(out_dir, basename)
 		os.makedirs(outdir_vid, exist_ok=True)
-		ConvertVideo(file, outdir_vid)
+		ConvertVideo(file, outdir_vid, seuil=args.threshold, skipframes=args.skipframes, autorun=True)
 
 class ConvertVideo:
 
